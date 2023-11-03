@@ -14,10 +14,6 @@
  * Any additions, deletions, or changes to the original source files
  * must be clearly indicated in accompanying documentation.
  *
- * If only executable code is distributed, then the accompanying
- * documentation must state that "this software is based in part on the
- * work of the Khronos Group."
- *
  * THE MATERIALS ARE PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND,
  * EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
  * MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.
@@ -29,6 +25,7 @@
 
 #include "glvnd_genentry.h"
 #include "utils_misc.h"
+#include "compiler.h"
 
 #include <string.h>
 #include <stdint.h>
@@ -45,7 +42,7 @@
 #define GLX_STUBS_COUNT
 #include "g_glx_dispatch_stub_list.h"
 
-static GLVNDentrypointStub entrypointFunctions[GENERATED_ENTRYPOINT_MAX];
+USED static GLVNDentrypointStub entrypointFunctions[GENERATED_ENTRYPOINT_MAX];
 static char *entrypointNames[GENERATED_ENTRYPOINT_MAX] = {};
 static int entrypointCount = 0;
 
@@ -68,9 +65,16 @@ extern char glx_entrypoint_end[];
 #elif defined(USE_X86_64_ASM)
 
 #define STUB_SIZE 16
+
+#if defined(__ILP32__)
+#define STUB_ASM_ARCH(slot) \
+    "movl (4 * " slot ")+entrypointFunctions(%rip), %eax\n" \
+    "jmp *%rax\n"
+#else // defined(__ILP32__)
 #define STUB_ASM_ARCH(slot) \
     "movq entrypointFunctions@GOTPCREL(%rip), %rax\n\t" \
     "jmp *(8 * " slot ")(%rax)\n"
+#endif // defined(__ILP32__)
 
 #elif defined(USE_ARMV7_ASM)
 
@@ -93,6 +97,7 @@ extern char glx_entrypoint_end[];
 
 #define STUB_SIZE 16
 #define STUB_ASM_ARCH(slot) \
+    "hint #34\n" \
     "adrp x16, entrypointFunctions + " slot "*8\n" \
     "ldr x16, [x16, #:lo12:(entrypointFunctions + " slot "*8)]\n" \
     "br x16\n"
@@ -109,6 +114,16 @@ extern char glx_entrypoint_end[];
     "ld 12, (" slot " * 8)(11)\n" \
     "mtctr 12\n" \
     "bctr\n"
+
+#elif defined(USE_LOONGARCH64_ASM)
+
+#define STUB_SIZE 32
+#define STUB_ASM_ARCH(slot) \
+    "la.global $t0,entrypointFunctions\n" \
+    "li.d $t1," slot "*8\r\n" \
+    "add.d $t0, $t0,$t1\r\n" \
+    "ld.d $t0, $t0,0\n" \
+    "jirl $r0, $t0,0\n"
 
 #else
 #error "Can't happen -- not implemented"

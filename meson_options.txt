@@ -13,10 +13,6 @@
 # Any additions, deletions, or changes to the original source files
 # must be clearly indicated in accompanying documentation.
 
-# If only executable code is distributed, then the accompanying
-# documentation must state that "this software is based in part on the
-# work of the Khronos Group."
-
 # THE MATERIALS ARE PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND,
 # EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
 # MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.
@@ -47,6 +43,12 @@ option(
   description : 'Support the GLX platform.'
 )
 option(
+  'hgl',
+  type : 'boolean',
+  value : true,
+  description : 'Support the Haiku GL platform.'
+)
+option(
   'gles1',
   type : 'boolean',
   value : true,
@@ -60,8 +62,15 @@ option(
 )
 option(
   'tls',
-  type : 'feature',
-  description : 'Use Thread Local Storage.'
+  type : 'boolean',
+  value : true,
+  description : 'Use Thread Local Storage (if supported).'
+)
+option(
+  'dispatch-tls',
+  type : 'boolean',
+  value : true,
+  description : 'Use TLS-based stubs in libGLdispatch (if supported).'
 )
 option(
   'dispatch-page-size',

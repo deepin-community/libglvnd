@@ -14,10 +14,6 @@
 # Any additions, deletions, or changes to the original source files
 # must be clearly indicated in accompanying documentation.
 
-# If only executable code is distributed, then the accompanying
-# documentation must state that "this software is based in part on the
-# work of the Khronos Group."
-
 # THE MATERIALS ARE PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND,
 # EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
 # MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.
@@ -32,7 +28,7 @@ libGL = shared_library(
   include_directories : [inc_include],
   link_args : '-Wl,-Bsymbolic',
   dependencies : [
-    dep_dl, idep_gldispatch, idep_glapi_gl, idep_glx, idep_utils_misc,
+    dep_dl, idep_gldispatch, idep_glapi_gl, dep_glx, idep_utils_misc, dep_x11_headers
   ],
   version : '1.7.0',
   gnu_symbol_visibility : 'hidden',
@@ -45,6 +41,15 @@ pkg.generate(
   description : 'Legacy OpenGL and GLX library and headers.',
   version : '1.2',
 )
+
+dep_gl = declare_dependency(
+  link_with : libGL,
+  include_directories : inc_include,
+)
+
+if meson.version().version_compare('>= 0.54')
+  meson.override_dependency('gl', dep_gl)
+endif
 
 test(
   'GL symbols check',

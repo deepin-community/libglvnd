@@ -14,10 +14,6 @@
 # Any additions, deletions, or changes to the original source files
 # must be clearly indicated in accompanying documentation.
 
-# If only executable code is distributed, then the accompanying
-# documentation must state that "this software is based in part on the
-# work of the Khronos Group."
-
 # THE MATERIALS ARE PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND,
 # EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
 # MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.
@@ -43,6 +39,15 @@ pkg.generate(
   description : 'OpenGL ES v2/v3 library and headers.',
   version : '3.2',
 )
+
+dep_glesv2 = declare_dependency(
+  link_with : libGLESv2,
+  include_directories : inc_include,
+)
+
+if meson.version().version_compare('>= 0.54')
+  meson.override_dependency('glesv2', dep_glesv2)
+endif
 
 test(
   'GLESv2 symbols check',

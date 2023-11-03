@@ -14,10 +14,6 @@
  * Any additions, deletions, or changes to the original source files
  * must be clearly indicated in accompanying documentation.
  *
- * If only executable code is distributed, then the accompanying
- * documentation must state that "this software is based in part on the
- * work of the Khronos Group."
- *
  * THE MATERIALS ARE PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND,
  * EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
  * MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.
@@ -56,14 +52,25 @@
 #include <EGL/egl.h>
 #include <EGL/eglext.h>
 
+#include "glvnd_list.h"
+
 #define DUMMY_VENDOR_NAME_0 "dummy0"
 #define DUMMY_VENDOR_NAME_1 "dummy1"
 
 /**
- * The number of devices that each dummy vendor library exposes. This is used
- * to figure out which vendor library should be behind each device.
+ * The number of devices that each dummy vendor library exposes by default.
+ * This is used to figure out which vendor library should be behind each
+ * device.
  */
 #define DUMMY_EGL_DEVICE_COUNT 2
+
+/**
+ * The maximum number of devices that each dummy vendor library can expose.
+ *
+ * This is used to test adding a device after the initial eglQueryDevicesEXT
+ * call.
+ */
+#define DUMMY_EGL_MAX_DEVICE_COUNT 3
 
 /**
  * A platform enum to select a vendor library by name.
@@ -80,6 +87,14 @@
  */
 #define EGL_CREATE_CONTEXT_FAIL 0x010001
 
+/**
+ * This attribute is for eglCreatePlatformDisplay. The attribute is the index
+ * of the EGLDeviceEXT handle to associate with the display.
+ *
+ * This is used to test eglQueryDisplayEXT.
+ */
+#define EGL_DEVICE_INDEX 0x010002
+
 enum
 {
     DUMMY_COMMAND_GET_VENDOR_NAME,
@@ -93,6 +108,9 @@ enum
  */
 typedef struct DummyEGLContextRec {
     const char *vendorName;
+
+    // Everything after this is used internally by EGL_dummy.c.
+    struct glvnd_list entry;
 } DummyEGLContext;
 
 /**
@@ -114,5 +132,20 @@ typedef void * (* pfn_eglTestDispatchDevice) (EGLDeviceEXT dev, EGLint command, 
  * the current context.
  */
 typedef void * (* pfn_eglTestDispatchCurrent) (EGLint command, EGLAttrib param);
+
+/**
+ * Returns an EGLDeviceEXT handle from the vendor library.
+ *
+ * This is used to test returning a device that wasn't listed in a call to
+ * eglQueryDevicesEXT.
+ */
+typedef EGLDeviceEXT (* pfn_eglTestReturnDevice) (EGLDisplay dpy, EGLint index);
+
+/**
+ * Changes the number of EGLDeviceEXT handles that the dummy library exposes.
+ *
+ * This function has to be looked up using dlsym, not eglGetProcAddress.
+ */
+typedef void (* pfn_DummySetDeviceCount) (EGLint count);
 
 #endif // EGL_DUMMY_H

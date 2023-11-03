@@ -13,10 +13,6 @@
 # Any additions, deletions, or changes to the original source files
 # must be clearly indicated in accompanying documentation.
 
-# If only executable code is distributed, then the accompanying
-# documentation must state that "this software is based in part on the
-# work of the Khronos Group."
-
 # THE MATERIALS ARE PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND,
 # EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
 # MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.
@@ -29,8 +25,24 @@ libegl_dispatch_stubs = static_library(
   'egl_dispatch_stubs',
   ['egldispatchstubs.c', g_egldispatchstubs_c, g_egldispatchstubs_h],
   include_directories : inc_include,
+  dependencies : [dep_x11_headers],
   gnu_symbol_visibility : 'hidden',
 )
+
+if host_machine.system() in ['haiku']
+  # A booted Haiku system has a rigid directory structure.
+  # non-packaged prefixes are like local where the user can modify the contents.
+  # Anything missing "non-packaged" is read-only and populated by our software packages.
+  # Anything in system is system installed software, anything in home is user installed
+  egl_vendor_config_dirs =  '/boot/home/config/non-packaged/add-ons/opengl/egl_vendor.d'
+  egl_vendor_config_dirs += ':/boot/home/config/add-ons/opengl/egl_vendor.d'
+  egl_vendor_config_dirs += ':/boot/system/non-packaged/add-ons/opengl/egl_vendor.d'
+  egl_vendor_config_dirs += ':/boot/system/add-ons/opengl/egl_vendor.d'
+else
+  egl_vendor_config_dirs = '@0@/glvnd/egl_vendor.d:@1@/glvnd/egl_vendor.d'.format(
+    join_paths(get_option('prefix'),get_option('sysconfdir')),
+    join_paths(get_option('prefix'),get_option('datadir')))
+endif
 
 libEGL = shared_library(
   'EGL',
@@ -42,9 +54,7 @@ libEGL = shared_library(
     'libeglerror.c',
   ],
   c_args : [
-    '-DDEFAULT_EGL_VENDOR_CONFIG_DIRS="@0@/glvnd/egl_vendor.d:@1@/glvnd/egl_vendor.d"'.format(
-      join_paths(get_option('prefix'), get_option('sysconfdir')),
-      join_paths(get_option('prefix'), get_option('datadir'))),
+    '-DDEFAULT_EGL_VENDOR_CONFIG_DIRS="@0@"'.format(egl_vendor_config_dirs)
   ],
   include_directories : inc_include,
   link_args : '-Wl,-Bsymbolic',
@@ -64,6 +74,15 @@ pkg.generate(
   description : 'EGL library and headers',
   version : '1.5',
 )
+
+dep_egl = declare_dependency(
+  link_with : libEGL,
+  include_directories : inc_include,
+)
+
+if meson.version().version_compare('>= 0.54')
+  meson.override_dependency('egl', dep_egl)
+endif
 
 test(
   'EGL symbols check',
