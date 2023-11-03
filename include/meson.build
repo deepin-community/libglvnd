@@ -13,10 +13,6 @@
 # Any additions, deletions, or changes to the original source files
 # must be clearly indicated in accompanying documentation.
 
-# If only executable code is distributed, then the accompanying
-# documentation must state that "this software is based in part on the
-# work of the Khronos Group."
-
 # THE MATERIALS ARE PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND,
 # EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
 # MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.
@@ -26,6 +22,7 @@
 # MATERIALS OR THE USE OR OTHER DEALINGS IN THE MATERIALS.
 
 inc_include = include_directories('.')
+inc_include_hgl = include_directories('HGL/opengl')
 
 install_headers(
   'glvnd/GLdispatchABI.h',
@@ -55,6 +52,17 @@ if with_glx and _headers
     'GL/glx.h',
     'GL/glxext.h',
     subdir : 'GL',
+  )
+endif
+
+if with_hgl and _headers
+  install_headers(
+    'HGL/opengl/GLView.h',
+    subdir : 'opengl',
+  )
+  install_headers(
+    'HGL/OpenGLKit.h',
+    subdir : '',
   )
 endif
 
@@ -93,4 +101,3 @@ if get_option('egl') and _headers
     subdir : 'EGL',
   )
 endif
-

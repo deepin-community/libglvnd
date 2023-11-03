@@ -13,10 +13,6 @@
 # Any additions, deletions, or changes to the original source files
 # must be clearly indicated in accompanying documentation.
 
-# If only executable code is distributed, then the accompanying
-# documentation must state that "this software is based in part on the
-# work of the Khronos Group."
-
 # THE MATERIALS ARE PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND,
 # EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
 # MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.
@@ -58,6 +54,8 @@ else
     _entry_files += 'entry_ppc64_tls.c'
   elif gl_dispatch_type == 'ppc64_tsd'
     _entry_files += 'entry_ppc64_tsd.c'
+  elif gl_dispatch_type == 'loongarch64_tsd'
+    _entry_files += 'entry_loongarch64_tsd.c'
   else
     error('No matching ASM file for @0@'.format(gl_dispatch_type))
   endif

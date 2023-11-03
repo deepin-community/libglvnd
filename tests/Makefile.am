@@ -13,10 +13,6 @@
 # Any additions, deletions, or changes to the original source files
 # must be clearly indicated in accompanying documentation.
 #
-# If only executable code is distributed, then the accompanying
-# documentation must state that "this software is based in part on the
-# work of the Khronos Group."
-#
 # THE MATERIALS ARE PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND,
 # EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
 # MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.
@@ -119,20 +115,26 @@ TESTGLXMAKECURRENT_SOURCES_COMMON = \
 check_PROGRAMS += testglxmakecurrent
 testglxmakecurrent_SOURCES = $(TESTGLXMAKECURRENT_SOURCES_COMMON)
 testglxmakecurrent_CFLAGS = $(CFLAGS_COMMON) $(X11_CFLAGS)
-testglxmakecurrent_LDADD = $(X11_LIBS) @LIB_DL@
+testglxmakecurrent_LDADD = $(X11_LIBS)
 testglxmakecurrent_LDADD += $(top_builddir)/src/GLX/libGLX.la
 testglxmakecurrent_LDADD += $(top_builddir)/src/OpenGL/libOpenGL.la
-testglxmakecurrent_LDADD += $(top_builddir)/src/util/libglvnd_pthread.la
 testglxmakecurrent_LDADD += $(top_builddir)/src/util/libtrace.la
 testglxmakecurrent_LDADD += $(top_builddir)/src/util/libutils_misc.la
 
+check_PROGRAMS += testglxmakecurrent_mt
+testglxmakecurrent_mt_SOURCES = $(TESTGLXMAKECURRENT_SOURCES_COMMON)
+testglxmakecurrent_mt_CFLAGS = $(CFLAGS_COMMON) $(X11_CFLAGS) $(PTHREAD_CFLAGS) -DUSE_PTHREADS=1
+testglxmakecurrent_mt_LDADD = $(X11_LIBS) $(PTHREAD_LIBS)
+testglxmakecurrent_mt_LDADD += $(top_builddir)/src/GLX/libGLX.la
+testglxmakecurrent_mt_LDADD += $(top_builddir)/src/OpenGL/libOpenGL.la
+testglxmakecurrent_mt_LDADD += $(top_builddir)/src/util/libtrace.la
+testglxmakecurrent_mt_LDADD += $(top_builddir)/src/util/libutils_misc.la
 
 check_PROGRAMS += testglxmakecurrent_oldlink
 testglxmakecurrent_oldlink_SOURCES = $(TESTGLXMAKECURRENT_SOURCES_COMMON)
 testglxmakecurrent_oldlink_CFLAGS = $(CFLAGS_COMMON) $(X11_CFLAGS)
-testglxmakecurrent_oldlink_LDADD = $(X11_LIBS) @LIB_DL@
+testglxmakecurrent_oldlink_LDADD = $(X11_LIBS)
 testglxmakecurrent_oldlink_LDADD += $(top_builddir)/src/GL/libGL.la
-testglxmakecurrent_oldlink_LDADD += $(top_builddir)/src/util/libglvnd_pthread.la
 testglxmakecurrent_oldlink_LDADD += $(top_builddir)/src/util/libtrace.la
 testglxmakecurrent_oldlink_LDADD += $(top_builddir)/src/util/libutils_misc.la
 
@@ -176,10 +178,14 @@ endif # ENABLE_GLX
 TESTS_EGL =
 TESTS_EGL += testegldisplay.sh
 TESTS_EGL += testegldevice.sh
+TESTS_EGL += testegldeviceadd_querydevices.sh
+TESTS_EGL += testegldeviceadd_returndevice.sh
+TESTS_EGL += testegldeviceadd_querydisplay.sh
 TESTS_EGL += testeglgetprocaddress.sh
 TESTS_EGL += testeglmakecurrent.sh
 TESTS_EGL += testeglerror.sh
 TESTS_EGL += testegldebug.sh
+TESTS_EGL += testeglcurrentcleanup.sh
 
 if ENABLE_EGL
 
@@ -189,32 +195,38 @@ check_PROGRAMS += testegldisplay
 testegldisplay_SOURCES = \
 	testegldisplay.c \
 	egl_test_utils.c
-testegldisplay_LDADD = $(top_builddir)/src/EGL/libEGL.la
+testegldisplay_LDADD = $(top_builddir)/src/EGL/libEGL.la @LIB_DL@
 
 check_PROGRAMS += testegldevice
 testegldevice_SOURCES = \
 	testegldevice.c \
 	egl_test_utils.c
-testegldevice_LDADD = $(top_builddir)/src/EGL/libEGL.la
+testegldevice_LDADD = $(top_builddir)/src/EGL/libEGL.la @LIB_DL@
+
+check_PROGRAMS += testegldeviceadd
+testegldeviceadd_SOURCES = \
+	testegldeviceadd.c \
+	egl_test_utils.c
+testegldeviceadd_LDADD = $(top_builddir)/src/EGL/libEGL.la @LIB_DL@
 
 check_PROGRAMS += testeglgetprocaddress
 testeglgetprocaddress_SOURCES = \
 	testeglgetprocaddress.c \
 	egl_test_utils.c
-testeglgetprocaddress_LDADD = $(top_builddir)/src/EGL/libEGL.la
+testeglgetprocaddress_LDADD = $(top_builddir)/src/EGL/libEGL.la @LIB_DL@
 
 check_PROGRAMS += testeglmakecurrent
 testeglmakecurrent_SOURCES = \
 	testeglmakecurrent.c \
 	egl_test_utils.c
-testeglmakecurrent_LDADD = $(top_builddir)/src/EGL/libEGL.la
+testeglmakecurrent_LDADD = $(top_builddir)/src/EGL/libEGL.la @LIB_DL@
 testeglmakecurrent_LDADD += $(top_builddir)/src/OpenGL/libOpenGL.la
 
 check_PROGRAMS += testeglerror
 testeglerror_SOURCES = \
 	testeglerror.c \
 	egl_test_utils.c
-testeglerror_LDADD = $(top_builddir)/src/EGL/libEGL.la
+testeglerror_LDADD = $(top_builddir)/src/EGL/libEGL.la @LIB_DL@
 testeglerror_LDADD += $(top_builddir)/src/OpenGL/libOpenGL.la
 
 
@@ -222,7 +234,13 @@ check_PROGRAMS += testegldebug
 testegldebug_SOURCES = \
 	testegldebug.c \
 	egl_test_utils.c
-testegldebug_LDADD = $(top_builddir)/src/EGL/libEGL.la
+testegldebug_LDADD = $(top_builddir)/src/EGL/libEGL.la @LIB_DL@
+
+check_PROGRAMS += testeglcurrentcleanup
+testeglcurrentcleanup_SOURCES = \
+	testeglcurrentcleanup.c
+testeglcurrentcleanup_LDADD = $(top_builddir)/src/EGL/libEGL.la
+testeglcurrentcleanup_LDADD += $(PTHREAD_LIBS)
 
 endif # ENABLE_EGL
 

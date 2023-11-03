@@ -14,10 +14,6 @@
  * Any additions, deletions, or changes to the original source files
  * must be clearly indicated in accompanying documentation.
  *
- * If only executable code is distributed, then the accompanying
- * documentation must state that "this software is based in part on the
- * work of the Khronos Group."
- *
  * THE MATERIALS ARE PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND,
  * EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
  * MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.
@@ -46,6 +42,13 @@
  */
 static struct glvnd_list currentDispatchList;
 
+/**
+ * A linked list of __GLdispatchThreadStatePrivate structs that we've
+ * allocated. This is used to make sure that we clean up if we get unloaded
+ * while a thread is still current.
+ */
+static struct glvnd_list threadStatePrivateList;
+
 /*
  * Number of clients using GLdispatch.
  */
@@ -68,6 +71,8 @@ typedef struct __GLdispatchThreadStatePrivateRec {
 
     /// The current (high-level) __GLdispatch table
     __GLdispatchTable *dispatch;
+
+    struct glvnd_list entry;
 } __GLdispatchThreadStatePrivate;
 
 /*
@@ -170,6 +175,15 @@ void _init(void)
     glvndAppErrorCheckInit();
 }
 
+#if defined(USE_ATTRIBUTE_CONSTRUCTOR)
+void __attribute__ ((destructor)) __GLDispatchOnCloseFini(void)
+#else
+void _fini(void)
+#endif
+{
+    glvndCleanupPthreads();
+}
+
 void __glDispatchInit(void)
 {
     LockDispatch();
@@ -182,6 +196,7 @@ void __glDispatchInit(void)
         glvnd_list_init(&extProcList);
         glvnd_list_init(&currentDispatchList);
         glvnd_list_init(&dispatchStubList);
+        glvnd_list_init(&threadStatePrivateList);
 
         // Register GLdispatch's static entrypoints for rewriting
         localDispatchStubId = RegisterStubCallbacks(stub_get_patch_callbacks());
@@ -592,8 +607,7 @@ PUBLIC GLboolean __glDispatchMakeCurrent(__GLdispatchThreadState *threadState,
 
     DispatchCurrentRef(dispatch);
     numCurrentContexts++;
-
-    UnlockDispatch();
+    glvnd_list_add(&priv->entry, &threadStatePrivateList);
 
     /*
      * Update the API state with the new values.
@@ -602,6 +616,8 @@ PUBLIC GLboolean __glDispatchMakeCurrent(__GLdispatchThreadState *threadState,
     priv->vendorID = vendorID;
     priv->threadState = threadState;
     threadState->priv = priv;
+
+    UnlockDispatch();
 
     /*
      * Set the current state in TLS.
@@ -628,6 +644,7 @@ static void LoseCurrentInternal(__GLdispatchThreadState *curThreadState,
                 DispatchCurrentUnref(curThreadState->priv->dispatch);
             }
 
+            glvnd_list_del(&curThreadState->priv->entry);
             free(curThreadState->priv);
             curThreadState->priv = NULL;
         }
@@ -726,6 +743,14 @@ void __glDispatchFini(void)
     clientRefcount--;
 
     if (clientRefcount == 0) {
+        while (!glvnd_list_is_empty(&threadStatePrivateList))
+        {
+            __GLdispatchThreadStatePrivate *priv = glvnd_list_first_entry(&threadStatePrivateList,
+                    __GLdispatchThreadStatePrivate, entry);
+            glvnd_list_del(&priv->entry);
+            free(priv);
+        }
+
         /* This frees the dispatchStubList */
         UnregisterAllStubCallbacks();
 

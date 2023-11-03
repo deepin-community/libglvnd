@@ -13,10 +13,6 @@
 # Any additions, deletions, or changes to the original source files
 # must be clearly indicated in accompanying documentation.
 
-# If only executable code is distributed, then the accompanying
-# documentation must state that "this software is based in part on the
-# work of the Khronos Group."
-
 # THE MATERIALS ARE PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND,
 # EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
 # MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.
@@ -64,7 +60,11 @@ test(
   suite : ['gldispatch'],
 )
 
-_env_ld = 'LD_LIBRARY_PATH=@0@/'.format(dummy_build_dir)
+if host_machine.system() in ['haiku']
+    _env_ld = 'LIBRARY_PATH=@0@:/boot/system/lib'.format(dummy_build_dir)
+else
+    _env_ld = 'LD_LIBRARY_PATH=@0@'.format(dummy_build_dir)
+endif
 
 if with_glx
   env_glx = [
@@ -79,10 +79,11 @@ if with_glx
       ['testglxcreatecontext.c', 'test_utils.c'],
       include_directories : [inc_include],
       link_with : libOpenGL,
-      dependencies : [idep_glx, dep_x11],
+      dependencies : [dep_glx, dep_x11],
     ),
     env : env_glx,
     suite : ['glx'],
+    depends : [libGLX_dummy],
   )
 
   exe_glxmakecurrent = executable(
@@ -91,14 +92,13 @@ if with_glx
     include_directories : [inc_include],
     link_with : [libOpenGL],
     dependencies : [
-      dep_dl, dep_x11, idep_glvnd_pthread, idep_trace, idep_utils_misc,
-      idep_glx,
+      dep_x11, idep_trace, idep_utils_misc,
+      dep_glx,
     ],
   )
 
   foreach t : [['basic', ['-t', '1', '-i', '1'], env_glx],
                ['loop', ['-t', '1', '-i', '250'], env_glx],
-               ['threads', ['-t', '5', '-i', '20000'], [env_glx, 'LD_PRELOAD=libpthread.so.0']],
               ]
     test(
       'glxmakecurrent (@0@)'.format(t[0]),
@@ -106,8 +106,29 @@ if with_glx
       args : t[1],
       env : t[2],
       suite : ['glx'],
+      depends : [libGLX_dummy],
     )
   endforeach
+
+  exe_glxmakecurrent_mt = executable(
+    'glxmakecurrent_mt',
+    ['testglxmakecurrent.c', 'test_utils.c'],
+    include_directories : [inc_include],
+    c_args : ['-DUSE_PTHREADS=1'],
+    link_with : [libOpenGL],
+    dependencies : [
+      dep_x11, idep_trace, idep_utils_misc,
+      dep_glx, dep_threads,
+    ],
+  )
+  test(
+    'glxmakecurrent_mt',
+    exe_glxmakecurrent_mt,
+    args : ['-t', '5', '-i', '20000'],
+    env : env_glx,
+    suite : ['glx'],
+    depends : [libGLX_dummy],
+  )
 
   test(
     'glxmakecurrent (oldlink)',
@@ -117,19 +138,20 @@ if with_glx
       include_directories : [inc_include],
       link_with : [libGL],
       dependencies : [
-        dep_dl, dep_x11, idep_glvnd_pthread, idep_trace, idep_utils_misc,
+        dep_x11, idep_trace, idep_utils_misc,
       ],
     ),
     args : ['-t', '1', '-i', '1'],
     env : env_glx,
     suite : ['glx'],
+    depends : [libGLX_dummy],
   )
 
   exe_glxgetprocaddress = executable(
     'glxgetprocaddress',
     ['testglxgetprocaddress.c'],
     include_directories : [inc_include],
-    dependencies : [dep_x11, idep_glx, idep_gldispatch],
+    dependencies : [dep_x11, dep_glx, idep_gldispatch],
   )
 
   test(
@@ -137,6 +159,7 @@ if with_glx
     exe_glxgetprocaddress,
     env : env_glx,
     suite : ['glx'],
+    depends : [libGLX_dummy],
   )
 
   test(
@@ -144,6 +167,7 @@ if with_glx
     exe_glxgetprocaddress,
     env : env_glx,
     suite : ['glx'],
+    depends : [libGLX_dummy],
   )
 
   test(
@@ -152,10 +176,11 @@ if with_glx
       'testglxgetprocaddress_genentry',
       ['testglxgetprocaddress_genentry.c'],
       include_directories : [inc_include],
-      dependencies : [dep_x11, idep_glx],
+      dependencies : [dep_x11, dep_glx],
     ),
     env : env_glx,
     suite : ['glx'],
+    depends : [libGLX_dummy],
   )
 
   test(
@@ -165,10 +190,11 @@ if with_glx
       ['testglxgetclientstr.c'],
       include_directories : [inc_include],
       link_with : libOpenGL,
-      dependencies : [dep_x11, idep_glx, idep_trace, idep_utils_misc],
+      dependencies : [dep_x11, dep_glx, idep_trace, idep_utils_misc],
     ),
     env : env_glx,
     suite : ['glx'],
+    depends : [libGLX_dummy],
   )
 
   test(
@@ -178,10 +204,11 @@ if with_glx
       ['testglxqueryversion.c'],
       include_directories : [inc_include],
       link_with : libOpenGL,
-      dependencies : [dep_x11, idep_glx],
+      dependencies : [dep_x11, dep_glx],
     ),
     env : env_glx,
     suite : ['glx'],
+    depends : [libGLX_dummy],
   )
 endif
 
@@ -204,11 +231,43 @@ if get_option('egl')
         ['test@0@.c'.format(t[0]), 'egl_test_utils.c'],
         include_directories : [inc_include],
         link_with : [libEGL, t[1]],
-        dependencies : [t[2]],
+        dependencies : [dep_dl, t[2]],
       ),
+      env : env_egl,
+      suite : ['egl'],
+      depends : libEGL_dummy,
+    )
+  endforeach
+
+  exe_egldeviceadd = executable(
+    'egldeviceadd',
+    ['testegldeviceadd.c', 'egl_test_utils.c'],
+    include_directories : [inc_include],
+    link_with : [libEGL],
+    dependencies : [dep_dl],
+  )
+  foreach t : [ 'querydevices', 'returndevice', 'querydisplay' ]
+    test(
+      'egldeviceadd (@0@)'.format(t),
+      exe_egldeviceadd,
+      args : [t],
       env : env_egl,
       suite : ['egl'],
     )
   endforeach
+
+  test(
+    'eglcurrentcleanup',
+    executable(
+      'eglcurrentcleanup',
+      ['testeglcurrentcleanup.c'],
+      include_directories : [inc_include],
+      link_with : [libEGL],
+      dependencies : [dep_threads],
+    ),
+    args : [ '-m', '-t', '-k', '-r' ],
+    env : env_egl,
+    suite : ['egl'],
+  )
 endif
 

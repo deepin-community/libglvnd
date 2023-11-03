@@ -13,10 +13,6 @@
 # Any additions, deletions, or changes to the original source files
 # must be clearly indicated in accompanying documentation.
 
-# If only executable code is distributed, then the accompanying
-# documentation must state that "this software is based in part on the
-# work of the Khronos Group."
-
 # THE MATERIALS ARE PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND,
 # EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
 # MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.
@@ -28,10 +24,14 @@
 project(
   'glvnd',
   'c',
-  version : '1.3.4',
+  version : '1.7.0',
   meson_version : '>= 0.48',
   default_options : ['c_std=gnu99']
 )
+
+if host_machine.system() in ['darwin', 'windows']
+  error('Host OS: @0@ is unsupported.'.format(host_machine.system()))
+endif
 
 dep_null = dependency('', required : false)
 cc = meson.get_compiler('c')
@@ -65,7 +65,8 @@ if not with_asm.disabled()
         || defined(__ARM_ARCH_7R__) \
         || defined(__ARM_ARCH_7M__) \
         || defined(__ARM_ARCH_7S__) \
-        || (defined(__ARM_ARCH) && __ARM_ARCH >= 7))
+        || defined(__ARM_ARCH_6__) \
+        || (defined(__ARM_ARCH) && __ARM_ARCH >= 6))
 #error "Not ARM7"
 #endif
       ''', name : 'ARMv7 macros')
@@ -88,17 +89,14 @@ if not with_asm.disabled()
   endif
 endif
 
-if use_asm
-  add_project_arguments('-DUSE_DISPATCH_ASM', language : 'c')
-endif
-
 dep_dl = cc.find_library('dl', required : false)
 dep_m = cc.find_library('m', required : false)
 dep_threads = dependency('threads')
 dep_x11 = dependency('x11', required : get_option('x11'))
+
 dep_x11_headers = dep_x11.partial_dependency(compile_args : true, includes : true)
 if dep_x11.found()
-  add_project_arguments('-DUSE_X11', language : ['c'])
+  add_project_arguments('-DENABLE_EGL_X11', language : ['c'])
 endif
 
 dep_xext = dep_null
@@ -111,20 +109,29 @@ elif not get_option('glx').disabled() and dep_x11.found()
   dep_glproto = dependency('glproto', required : get_option('glx'))
   with_glx = true
 endif
-dep_glx = [dep_xext, dep_glproto]
+
+with_hgl = false
+if get_option('hgl') and host_machine.system() in ['haiku']
+  add_languages('cpp')
+  with_hgl = true
+endif
 
 if cc.compiles('typeof(int *);', name : 'typeof')
   add_project_arguments('-DHAVE_TYPEOF', language : ['c'])
 endif
 
 with_tls = get_option('tls')
-have_tls = false
-if not with_tls.disabled()
+if with_tls
+  # Use a __thread variable if possible, even if we can't use the TLS assembly
+  # stubs, because it's still faster than calling pthread_getspecific.
   have_tls = cc.compiles(
-    '__thread int foo __attribute__((tls_model("initial-exec")));',
-    name : 'initial-exec TLS',
+    '__thread int foo;',
+    name : '__thread',
   )
+else
+  have_tls = false
 endif
+message('Using TLS variable for dispatch table: @0@'.format(have_tls))
 
 if have_tls
   add_project_arguments('-DGLDISPATCH_USE_TLS', language : ['c'])
@@ -132,7 +139,19 @@ endif
 
 gl_dispatch_type = 'pure_c'
 if use_asm
-  thread_type = have_tls ? 'tls' : 'tsd'
+  # TLS asm requires initial-exec, which is not portable (only supported by
+  # FreeBSD and glibc). on other platforms we use TSD stubs to allow calling
+  # extension functions unknown at compile time.
+  # https://gitlab.freedesktop.org/glvnd/libglvnd/-/merge_requests/249
+  thread_type = 'tsd'
+  if get_option('dispatch-tls')
+    if have_tls
+      if host_machine.system() == 'freebsd' or cc.has_header_symbol('features.h', '__GLIBC__')
+        thread_type = 'tls'
+      endif
+    endif
+  endif
+
   if host_machine.cpu_family().startswith('x86')
     gl_dispatch_type = '@0@_@1@'.format(
       host_machine.cpu_family(),
@@ -145,8 +164,37 @@ if use_asm
   elif host_machine.cpu_family() == 'ppc64'
     gl_dispatch_type = 'ppc64_@0@'.format(thread_type)
   endif
+  add_project_arguments('-DUSE_DISPATCH_ASM', language : 'c')
 endif
 message('Using dispatch stub type: @0@'.format(gl_dispatch_type))
+
+# -mtls-dialect=gnu2 speeds up non-initial-exec TLS significantly but requires
+# full toolchain (including libc) support.
+#
+# tls stubs are incompatible with tlsdesc, but are only compatible with
+# initial-exec which is faster anyways
+if not gl_dispatch_type.endswith('_tls')
+  have_mtls_dialect = false
+  foreach c_arg : get_option('c_args')
+    if c_arg.startswith('-mtls-dialect=')
+      have_mtls_dialect = true
+      break
+    endif
+  endforeach
+  if not have_mtls_dialect
+    # need .run to check libc support. meson aborts when calling .run when
+    # cross-compiling, but because this is just an optimization we can skip it
+    if meson.is_cross_build()
+      warning('cannot auto-detect -mtls-dialect when cross-compiling, using compiler default')
+    else
+      # -fpic to force dynamic tls, otherwise TLS relaxation defeats check
+      gnu2_test = cc.run('int __thread x; int main() { return x; }', args: ['-mtls-dialect=gnu2', '-fpic'], name: '-mtls-dialect=gnu2')
+      if gnu2_test.returncode() == 0
+        add_project_arguments('-mtls-dialect=gnu2', language : ['c'])
+      endif
+    endif
+  endif
+endif
 
 if cc.has_function_attribute('constructor')
   add_project_arguments('-DUSE_ATTRIBUTE_CONSTRUCTOR', language : ['c'])

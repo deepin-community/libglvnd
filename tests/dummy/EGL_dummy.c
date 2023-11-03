@@ -14,10 +14,6 @@
  * Any additions, deletions, or changes to the original source files
  * must be clearly indicated in accompanying documentation.
  *
- * If only executable code is distributed, then the accompanying
- * documentation must state that "this software is based in part on the
- * work of the Khronos Group."
- *
  * THE MATERIALS ARE PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND,
  * EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
  * MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.
@@ -42,13 +38,18 @@ enum
     DI_eglTestDispatchDisplay,
     DI_eglTestDispatchDevice,
     DI_eglTestDispatchCurrent,
+    DI_eglTestReturnDevice,
+    DI_eglQueryDeviceAttribEXT,
+    DI_eglQueryDeviceStringEXT,    
     DI_COUNT,
 };
 
 static const char *CLIENT_EXTENSIONS =
     "EGL_KHR_client_get_all_proc_addresses"
     " EGL_EXT_client_extensions"
+    " EGL_EXT_device_base"
     " EGL_EXT_device_enumeration"
+    " EGL_EXT_device_query"
     ;
 
 static const char *PLATFORM_EXTENSIONS =
@@ -61,6 +62,7 @@ typedef struct DummyEGLDisplayRec {
     EGLenum platform;
     void *native_display;
     EGLLabelKHR label;
+    EGLDeviceEXT device;
 
     struct glvnd_list entry;
 } DummyEGLDisplay;
@@ -69,15 +71,30 @@ typedef struct DummyThreadStateRec {
     EGLint lastError;
     EGLContext currentContext;
     EGLLabelKHR label;
+
+    struct glvnd_list entry;
 } DummyThreadState;
 
 static const __EGLapiExports *apiExports = NULL;
+
+static glvnd_mutex_t threadStateLock = GLVND_MUTEX_INITIALIZER;
 static glvnd_key_t threadStateKey;
-static struct glvnd_list displayList;
+static struct glvnd_list threadStateList = { &threadStateList, &threadStateList };
+
+static struct glvnd_list displayList = { &displayList, &displayList };
+static glvnd_mutex_t displayListLock = GLVND_MUTEX_INITIALIZER;
 static EGLint failNextMakeCurrentError = EGL_NONE;
+
+static glvnd_mutex_t contextListLock = GLVND_MUTEX_INITIALIZER;
+static struct glvnd_list contextList = { &contextList, &contextList };
 
 static EGLDEBUGPROCKHR debugCallbackFunc = NULL;
 static EGLBoolean debugCallbackEnabled = EGL_TRUE;
+
+// The EGLDeviceEXT handle values have to be pointers, so just use the
+// address of an array element for each EGLDeviceEXT handle.
+static const char EGL_DEVICE_HANDLES[DUMMY_EGL_MAX_DEVICE_COUNT];
+static EGLint deviceCount = DUMMY_EGL_DEVICE_COUNT;
 
 static DummyThreadState *GetThreadState(void)
 {
@@ -90,14 +107,28 @@ static DummyThreadState *GetThreadState(void)
             abort();
         }
         thr->lastError = EGL_SUCCESS;
+        __glvndPthreadFuncs.mutex_lock(&threadStateLock);
+        glvnd_list_append(&thr->entry, &threadStateList);
+        __glvndPthreadFuncs.mutex_unlock(&threadStateLock);
         __glvndPthreadFuncs.setspecific(threadStateKey, thr);
     }
     return thr;
 }
 
+void DestroyThreadState(DummyThreadState *thr)
+{
+    if (thr != NULL)
+    {
+        __glvndPthreadFuncs.mutex_lock(&threadStateLock);
+        glvnd_list_del(&thr->entry);
+        __glvndPthreadFuncs.mutex_unlock(&threadStateLock);
+        free(thr);
+    }
+}
+
 static void OnThreadTerminate(void *ptr)
 {
-    free(ptr);
+    DestroyThreadState((DummyThreadState *) ptr);
 }
 
 static void CommonEntrypoint(void)
@@ -121,11 +152,15 @@ static void SetLastError(const char *command, EGLLabelKHR label, EGLint error)
 static DummyEGLDisplay *LookupEGLDisplay(EGLDisplay dpy)
 {
     DummyEGLDisplay *disp = NULL;
+
+    __glvndPthreadFuncs.mutex_lock(&displayListLock);
     glvnd_list_for_each_entry(disp, &displayList, entry) {
         if (dpy == (EGLDisplay) disp) {
+            __glvndPthreadFuncs.mutex_unlock(&displayListLock);
             return disp;
         }
     }
+    __glvndPthreadFuncs.mutex_unlock(&displayListLock);
     // Libglvnd should never pass an invalid EGLDisplay handle to a vendor
     // library.
     printf("Invalid EGLDisplay %p\n", dpy);
@@ -134,18 +169,14 @@ static DummyEGLDisplay *LookupEGLDisplay(EGLDisplay dpy)
 
 static EGLDeviceEXT GetEGLDevice(EGLint index)
 {
-    // The EGLDeviceEXT handle values have to be pointers, so just use the
-    // address of an array element for each EGLDeviceEXT handle.
-    static const char EGL_DEVICE_HANDLES[DUMMY_EGL_DEVICE_COUNT];
-
-    assert(index >= 0 && index < DUMMY_EGL_DEVICE_COUNT);
+    assert(index >= 0 && index < DUMMY_EGL_MAX_DEVICE_COUNT);
     return (EGLDeviceEXT) (EGL_DEVICE_HANDLES + index);
 }
 
 static EGLBoolean IsEGLDeviceValid(EGLDeviceEXT dev)
 {
     int i;
-    for (i=0; i<DUMMY_EGL_DEVICE_COUNT; i++) {
+    for (i=0; i<deviceCount; i++) {
         if (dev == GetEGLDevice(i)) {
             return EGL_TRUE;
         }
@@ -167,6 +198,7 @@ static EGLDisplay dummyGetPlatformDisplay(EGLenum platform, void *native_display
 {
     CommonEntrypoint();
     DummyEGLDisplay *disp = NULL;
+    EGLDeviceEXT device = EGL_NO_DEVICE_EXT;
 
     if (platform == EGL_NONE) {
         if (native_display != EGL_DEFAULT_DISPLAY) {
@@ -188,6 +220,20 @@ static EGLDisplay dummyGetPlatformDisplay(EGLenum platform, void *native_display
             // Set the native_display pointer to NULL. This makes it simpler to
             // find the same dispaly below.
             native_display = NULL;
+
+            if (attrib_list != NULL) {
+                int i;
+                for (i=0; attrib_list[i] != EGL_NONE; i += 2) {
+                    if (attrib_list[i] == EGL_DEVICE_INDEX) {
+                        EGLint index = (EGLint) attrib_list[i + 1];
+                        assert(index >= 0 && index < deviceCount);
+                        device = GetEGLDevice(index);
+                    } else {
+                        printf("Invalid attribute 0x%04llx\n", (unsigned long long) attrib_list[i]);
+                        abort();
+                    }
+                }
+            }
         }
     } else if (platform == EGL_PLATFORM_DEVICE_EXT) {
         if (native_display == EGL_DEFAULT_DISPLAY) {
@@ -197,14 +243,17 @@ static EGLDisplay dummyGetPlatformDisplay(EGLenum platform, void *native_display
                 return EGL_NO_DISPLAY;
             }
         }
+        device = (EGLDeviceEXT) native_display;
     } else {
         // We don't support this platform.
         SetLastError("eglGetPlatformDisplay", NULL, EGL_BAD_PARAMETER);
         return EGL_NO_DISPLAY;
     }
 
+    __glvndPthreadFuncs.mutex_lock(&displayListLock);
     glvnd_list_for_each_entry(disp, &displayList, entry) {
-        if (disp->platform == platform && disp->native_display == native_display) {
+        if (disp->platform == platform && disp->native_display == native_display && disp->device == device) {
+            __glvndPthreadFuncs.mutex_unlock(&displayListLock);
             return disp;
         }
     }
@@ -213,7 +262,9 @@ static EGLDisplay dummyGetPlatformDisplay(EGLenum platform, void *native_display
     disp = (DummyEGLDisplay *) calloc(1, sizeof(DummyEGLDisplay));
     disp->platform = platform;
     disp->native_display = native_display;
+    disp->device = device;
     glvnd_list_append(&disp->entry, &displayList);
+    __glvndPthreadFuncs.mutex_unlock(&displayListLock);
     return disp;
 }
 
@@ -289,6 +340,10 @@ static EGLContext EGLAPIENTRY dummy_eglCreateContext(EGLDisplay dpy,
     dctx = (DummyEGLContext *) calloc(1, sizeof(DummyEGLContext));
     dctx->vendorName = DUMMY_VENDOR_NAME;
 
+    __glvndPthreadFuncs.mutex_lock(&contextListLock);
+    glvnd_list_append(&dctx->entry, &contextList);
+    __glvndPthreadFuncs.mutex_unlock(&contextListLock);
+
     return (EGLContext) dctx;
 }
 
@@ -299,6 +354,9 @@ static EGLBoolean EGLAPIENTRY dummy_eglDestroyContext(EGLDisplay dpy, EGLContext
 
     if (ctx != EGL_NO_CONTEXT) {
         DummyEGLContext *dctx = (DummyEGLContext *) ctx;
+        __glvndPthreadFuncs.mutex_lock(&contextListLock);
+        glvnd_list_del(&dctx->entry);
+        __glvndPthreadFuncs.mutex_unlock(&contextListLock);
         free(dctx);
     }
     return EGL_TRUE;
@@ -467,7 +525,7 @@ static EGLBoolean EGLAPIENTRY dummy_eglReleaseThread(void)
         __glvndPthreadFuncs.getspecific(threadStateKey);
     if (thr != NULL) {
         __glvndPthreadFuncs.setspecific(threadStateKey, NULL);
-        free(thr);
+        DestroyThreadState(thr);
     }
     return EGL_TRUE;
 }
@@ -491,19 +549,49 @@ static EGLBoolean EGLAPIENTRY dummy_eglQueryDevicesEXT(EGLint max_devices, EGLDe
     CommonEntrypoint();
     if (devices != NULL) {
         EGLint i;
-        if (max_devices != DUMMY_EGL_DEVICE_COUNT) {
+        if (max_devices != deviceCount) {
             // libEGL should only every query the full list of devices.
             printf("Wrong max_devices in eglQueryDevicesEXT: %d\n", max_devices);
             abort();
         }
-        *num_devices = DUMMY_EGL_DEVICE_COUNT;
+        *num_devices = deviceCount;
         for (i=0; i<*num_devices; i++) {
             devices[i] = GetEGLDevice(i);
         }
     } else {
-        *num_devices = DUMMY_EGL_DEVICE_COUNT;
+        *num_devices = deviceCount;
     }
     return EGL_TRUE;
+}
+
+static EGLBoolean EGLAPIENTRY dummy_eglQueryDisplayAttribEXT(EGLDisplay dpy, EGLint attribute, EGLAttrib *value)
+{
+    DummyEGLDisplay *disp = LookupEGLDisplay(dpy);
+
+    if (attribute == EGL_DEVICE_EXT) {
+        *value = (EGLAttrib) disp->device;
+        return EGL_TRUE;
+    } else {
+        SetLastError("eglQueryDisplayAttribEXT", disp->label, EGL_BAD_ATTRIBUTE);
+        return EGL_FALSE;
+    }
+}
+
+static EGLBoolean EGLAPIENTRY dummy_eglQueryDeviceAttribEXT(EGLDeviceEXT device, EGLint attribute, EGLAttrib *value)
+{
+    // No device attributes are defined here.
+    SetLastError("eglQueryDeviceAttribEXT", NULL, EGL_BAD_ATTRIBUTE);
+    return EGL_FALSE;
+}
+
+static const char *EGLAPIENTRY dummy_eglQueryDeviceStringEXT(EGLDeviceEXT device, EGLint name)
+{
+    if (name == EGL_EXTENSIONS) {
+        return "";
+    } else {
+        SetLastError("eglQueryDeviceStringEXT", NULL, EGL_BAD_ATTRIBUTE);
+        return NULL;
+    }
 }
 
 static EGLint EGLAPIENTRY dummy_eglDebugMessageControlKHR(EGLDEBUGPROCKHR callback, const EGLAttrib *attrib_list)
@@ -599,9 +687,18 @@ static void *dummy_eglTestDispatchCurrent(EGLint command, EGLAttrib param)
     return CommonTestDispatch("eglTestDispatchCurrent", EGL_NO_DISPLAY, EGL_NO_DEVICE_EXT, command, param);
 }
 
+static EGLDeviceEXT dummy_eglTestReturnDevice(EGLDisplay dpy, EGLint index)
+{
+    assert(index >= 0 && index < deviceCount);
+    return GetEGLDevice(index);
+}
+
 static void *dispatch_eglTestDispatchDisplay(EGLDisplay dpy, EGLint command, EGLAttrib param);
 static void *dispatch_eglTestDispatchDevice(EGLDeviceEXT dpy, EGLint command, EGLAttrib param);
 static void *dispatch_eglTestDispatchCurrent(EGLint command, EGLAttrib param);
+static EGLDeviceEXT dispatch_eglTestReturnDevice(EGLDisplay dpy, EGLint index);
+static EGLBoolean EGLAPIENTRY dispatch_eglQueryDeviceAttribEXT(EGLDeviceEXT device, EGLint attribute, EGLAttrib *value);
+static const char *EGLAPIENTRY dispatch_eglQueryDeviceStringEXT(EGLDeviceEXT device, EGLint name);
 
 static struct {
     const char *name;
@@ -613,6 +710,9 @@ static struct {
     PROC_ENTRY(eglTestDispatchDisplay),
     PROC_ENTRY(eglTestDispatchDevice),
     PROC_ENTRY(eglTestDispatchCurrent),
+    PROC_ENTRY(eglTestReturnDevice),
+    PROC_ENTRY(eglQueryDeviceAttribEXT),
+    PROC_ENTRY(eglQueryDeviceStringEXT),
 #undef PROC_ENTRY
 };
 
@@ -636,6 +736,17 @@ static __eglMustCastToProperFunctionPointerType FetchVendorFunc(__EGLvendorInfo 
         abort();
     }
 
+    return func;
+}
+
+static __eglMustCastToProperFunctionPointerType FetchByDevice(EGLDeviceEXT dev, int index)
+{
+    __EGLvendorInfo *vendor;
+    __eglMustCastToProperFunctionPointerType func;
+
+    apiExports->threadInit();
+    vendor = apiExports->getVendorFromDevice(dev);
+    func = FetchVendorFunc(vendor, index, EGL_BAD_DEVICE_EXT);
     return func;
 }
 
@@ -684,6 +795,45 @@ static void *dispatch_eglTestDispatchCurrent(EGLint command, EGLAttrib param)
     }
 }
 
+static EGLDeviceEXT dispatch_eglTestReturnDevice(EGLDisplay dpy, EGLint index)
+{
+    __EGLvendorInfo *vendor;
+    pfn_eglTestReturnDevice func;
+    EGLDeviceEXT ret;
+
+    apiExports->threadInit();
+    vendor = apiExports->getVendorFromDisplay(dpy);
+    func = (pfn_eglTestReturnDevice) FetchVendorFunc(vendor, DI_eglTestReturnDevice, EGL_BAD_DISPLAY);
+    if (func != NULL) {
+        ret = func(dpy, index);
+    } else {
+        ret = NULL;
+    }
+    apiExports->setVendorForDevice(ret, vendor);
+    return ret;
+}
+
+static EGLBoolean EGLAPIENTRY dispatch_eglQueryDeviceAttribEXT(EGLDeviceEXT device, EGLint attribute, EGLAttrib *value)
+{
+    PFNEGLQUERYDEVICEATTRIBEXTPROC func = (PFNEGLQUERYDEVICEATTRIBEXTPROC)
+        FetchByDevice(device, DI_eglQueryDeviceAttribEXT);
+    if (func != NULL) {
+        return func(device, attribute, value);
+    } else {
+        return EGL_FALSE;
+    }
+}
+
+static const char *EGLAPIENTRY dispatch_eglQueryDeviceStringEXT(EGLDeviceEXT device, EGLint name)
+{
+    PFNEGLQUERYDEVICESTRINGEXTPROC func = (PFNEGLQUERYDEVICESTRINGEXTPROC)
+        FetchByDevice(device, DI_eglQueryDeviceStringEXT);
+    if (func != NULL) {
+        return func(device, name);
+    } else {
+        return EGL_FALSE;
+    }
+}
 
 static const struct {
     const char *name;
@@ -722,6 +872,9 @@ static const struct {
     PROC_ENTRY(eglGetError),
 
     PROC_ENTRY(eglQueryDevicesEXT),
+    PROC_ENTRY(eglQueryDisplayAttribEXT),
+    PROC_ENTRY(eglQueryDeviceAttribEXT),
+    PROC_ENTRY(eglQueryDeviceStringEXT),
     PROC_ENTRY(eglDebugMessageControlKHR),
     PROC_ENTRY(eglQueryDebugKHR),
     PROC_ENTRY(eglLabelObjectKHR),
@@ -778,6 +931,12 @@ static EGLBoolean dummyGetSupportsAPI(EGLenum api)
     }
 }
 
+PUBLIC void DummySetDeviceCount(EGLint count)
+{
+    assert(count >= 0 && count <= DUMMY_EGL_MAX_DEVICE_COUNT);
+    deviceCount = count;
+}
+
 PUBLIC EGLBoolean
 __egl_Main(uint32_t version, const __EGLapiExports *exports,
      __EGLvendorInfo *vendor, __EGLapiImports *imports)
@@ -808,3 +967,39 @@ __egl_Main(uint32_t version, const __EGLapiExports *exports,
     return EGL_TRUE;
 }
 
+#if defined(USE_ATTRIBUTE_CONSTRUCTOR)
+void __attribute__ ((destructor)) __eglDummyFini(void)
+#else
+void _fini(void)
+#endif
+{
+    if (apiExports == NULL) {
+        // We were never initialized, so there's nothing to clean up.
+        return;
+    }
+
+    __glvndPthreadFuncs.mutex_lock(&contextListLock);
+    while (!glvnd_list_is_empty(&contextList)) {
+        DummyEGLContext *ctx = glvnd_list_first_entry(&contextList, DummyEGLContext, entry);
+        glvnd_list_del(&ctx->entry);
+        free(ctx);
+    }
+    __glvndPthreadFuncs.mutex_unlock(&contextListLock);
+
+    while (!glvnd_list_is_empty(&displayList)) {
+        DummyEGLDisplay *disp = glvnd_list_first_entry(
+                &displayList, DummyEGLDisplay, entry);
+        glvnd_list_del(&disp->entry);
+        free(disp);
+    }
+
+    __glvndPthreadFuncs.key_delete(threadStateKey);
+    while (!glvnd_list_is_empty(&threadStateList)) {
+        DummyThreadState *thr = glvnd_list_first_entry(
+                &threadStateList, DummyThreadState, entry);
+        glvnd_list_del(&thr->entry);
+        free(thr);
+    }
+
+    glvndCleanupPthreads();
+}
