@@ -1,0 +1,27 @@
+diff --git a/src/EGL/Makefile.am b/src/EGL/Makefile.am
+index c49d976..24a793c 100644
+--- a/src/EGL/Makefile.am
++++ b/src/EGL/Makefile.am
+@@ -50,7 +50,7 @@ libEGL_la_CFLAGS += $(X11_CFLAGS)
+ endif
+ 
+ libEGL_la_CFLAGS += \
+-	-DDEFAULT_EGL_VENDOR_CONFIG_DIRS=\"@sysconfdir@/glvnd/egl_vendor.d:@datadir@/glvnd/egl_vendor.d\"
++	-DDEFAULT_EGL_VENDOR_CONFIG_DIRS=\"@localstatedir@/lib/glvnd/egl_vendor.d:@sysconfdir@/glvnd/egl_vendor.d:@datadir@/glvnd/egl_vendor.d\"
+ 
+ # Required library flags
+ libEGL_la_CFLAGS += $(PTHREAD_CFLAGS)
+diff --git a/src/EGL/meson.build b/src/EGL/meson.build
+index c90f0ca..b3a7f6c 100644
+--- a/src/EGL/meson.build
++++ b/src/EGL/meson.build
+@@ -39,7 +39,8 @@ if host_machine.system() in ['haiku']
+   egl_vendor_config_dirs += ':/boot/system/non-packaged/add-ons/opengl/egl_vendor.d'
+   egl_vendor_config_dirs += ':/boot/system/add-ons/opengl/egl_vendor.d'
+ else
+-  egl_vendor_config_dirs = '@0@/glvnd/egl_vendor.d:@1@/glvnd/egl_vendor.d'.format(
++  egl_vendor_config_dirs = '@0@/lib/glvnd/egl_vendor.d:@1@/glvnd/egl_vendor.d:@2@/glvnd/egl_vendor.d'.format(
++    join_paths(get_option('prefix'),get_option('localstatedir')),
+     join_paths(get_option('prefix'),get_option('sysconfdir')),
+     join_paths(get_option('prefix'),get_option('datadir')))
+ endif
