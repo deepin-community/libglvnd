@@ -1,0 +1,13 @@
+diff --git a/include/compiler.h b/include/compiler.h
+index 8c8ea36..2aa2415 100644
+--- a/include/compiler.h
++++ b/include/compiler.h
+@@ -304,7 +304,7 @@ static INLINE GLuint CPU_TO_LE32(GLuint x)
+     defined(__arm__) || \
+     defined(__sh__) || defined(__m32r__) || \
+     (defined(__sun) && defined(_IEEE_754)) || \
+-    defined(__alpha__)
++    defined(__alpha__) || defined(__sw_64__)
+ #define USE_IEEE
+ #define IEEE_ONE 0x3f800000
+ #endif

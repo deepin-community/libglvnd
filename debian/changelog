@@ -1,3 +1,9 @@
+libglvnd (1.7.0-1deepin2) unstable; urgency=medium
+
+  * feat: add sw64 support.
+
+ -- hudeng <hudeng@deepin.org>  Thu, 29 May 2025 17:51:00 +0800
+
 libglvnd (1.7.0-1deepin1) stable; urgency=medium
 
   * Add default configuration path for Egl vendor.
